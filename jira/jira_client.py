@@ -36,7 +36,7 @@ class JiraClient:
                     ]
                 },
                 "issuetype": {"name": JIRA_ISSUE_TYPE},
-                "priority": {"name": "High"},
+                "priority": {"name": priority},
                 "labels": DEFAULT_LABELS,
             }
         }

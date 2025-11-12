@@ -5,12 +5,12 @@ load_dotenv()
 
 OPENAI_API_KEY= os.getenv("OPENAI_API_KEY")
 # Logs directory
-LOGS_DIR = r"C:\development\ML\logs"
+LOGS_DIR = r"C:\Users\sleim\IdeaProjects\LogGenerator\logs"
 
-# CODEBASE_DIRS = [
-#     r"C:\development\ML",                  # Python project
-#     r"C:\Users\sleim\IdeaProjects\LogGenerator\src",  # Java project
-# ]
+CODEBASE_DIRS = [
+    r"C:\development\ML",              
+    r"C:\Users\sleim\IdeaProjects\LogGenerator\src"
+]
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "..", "storage", "tickets.db")
 
@@ -23,7 +23,7 @@ JIRA_EMAIL = os.getenv("JIRA_EMAIL")
 JIRA_API_TOKEN = os.getenv("JIRA_API_TOKEN")
 JIRA_PROJECT_KEY = os.getenv("JIRA_PROJECT_KEY")
 
-JIRA_ASSIGNEE_ID = None
+JIRA_ASSIGNEE_ID = os.getenv("JIRA_ASSIGNEE_ID")
 
 # Ticket defaults
 JIRA_ISSUE_TYPE = "Task"

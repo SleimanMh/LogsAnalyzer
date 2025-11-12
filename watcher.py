@@ -108,7 +108,7 @@ if __name__ == "__main__":
     # ✅ Phase 2: incremental real-time watch
     event_handler = LogDirectoryHandler()
     observer = Observer()
-    observer.schedule(event_handler, LOGS_DIR, recursive=False)
+    observer.schedule(event_handler, LOGS_DIR, recursive=True)
     observer.start()
 
     try:

@@ -30,8 +30,8 @@ class LLMClient:
 
     def analyze(self, trace, snippets):
         prompt = f"""
-You are a Python debugging assistant.
-You must return ONLY JSON with keys:
+You are a Python/Java debugging assistant.
+You must return ONLY JSON with keys, where the goal is to open a Jira ticket for the given error trace and code snippets.:
 - cause (string)
 - summary (string)
 - priority (string: one of ["High", "Medium", "Low"])
@@ -64,6 +64,7 @@ CODE SNIPPETS:
             return parsed
 
         return {
+            "Title": "LLM Analysis Failed",
             "cause": "Model returned invalid JSON",
             "summary": "LLM failed to produce valid JSON",
             "priority": "Medium",
