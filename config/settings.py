@@ -7,10 +7,9 @@ OPENAI_API_KEY= os.getenv("OPENAI_API_KEY")
 # Logs directory
 LOGS_DIR = r"C:\development\ML\logs"
 
-# CODEBASE_DIRS = [
-#     r"C:\development\ML",                  # Python project
-#     r"C:\Users\sleim\IdeaProjects\LogGenerator\src",  # Java project
-# ]
+CODEBASE_DIRS = [
+    r"C:\development\ML"
+]
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "..", "storage", "tickets.db")
 

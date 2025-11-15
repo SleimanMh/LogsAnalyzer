@@ -16,8 +16,17 @@ class JiraClient:
         self.base = JIRA_BASE_URL
         self.auth = (JIRA_EMAIL, JIRA_API_TOKEN)
 
-    def create_ticket(self, summary, description, priority):
+    def create_ticket(self, summary, description, priority, suggestions):
         url = f"{self.base}/rest/api/3/issue"
+
+        # 🧩 Build bullet list for suggestions
+        suggestion_items = [
+            {
+                "type": "paragraph",
+                "content": [{"type": "text", "text": f"- {s}"}]
+            }
+            for s in suggestions or []
+        ]
 
         payload = {
             "fields": {
@@ -32,11 +41,18 @@ class JiraClient:
                             "content": [
                                 {"type": "text", "text": description}
                             ]
-                        }
+                        },
+                        {
+                            "type": "paragraph",
+                            "content": [
+                                {"type": "text", "text": "\nSuggestions:"}
+                            ]
+                        },
+                        *suggestion_items
                     ]
                 },
                 "issuetype": {"name": JIRA_ISSUE_TYPE},
-                "priority": {"name": "High"},
+                "priority": {"name": priority},
                 "labels": DEFAULT_LABELS,
             }
         }
@@ -54,10 +70,10 @@ class JiraClient:
         if response.status_code >= 300:
             raise Exception(f"Jira error: {response.text}")
 
-        data = response.json()
-        return data["key"]
+        return response.json()["key"]
 
     def add_comment(self, issue_key, comment):
+        """Add a comment to an existing Jira issue."""
         url = f"{self.base}/rest/api/3/issue/{issue_key}/comment"
 
         payload = {
@@ -67,15 +83,24 @@ class JiraClient:
                 "content": [
                     {
                         "type": "paragraph",
-                        "content": [{"type": "text", "text": comment}]
+                        "content": [
+                            {"type": "text", "text": comment}
+                        ]
                     }
                 ]
             }
         }
 
-        requests.post(
+        response = requests.post(
             url,
             headers={"Content-Type": "application/json"},
             auth=self.auth,
             data=json.dumps(payload)
         )
+
+        if response.status_code >= 300:
+            raise Exception(
+                f"Failed to add comment to {issue_key}: {response.status_code} {response.text}"
+            )
+
+        return response.json()

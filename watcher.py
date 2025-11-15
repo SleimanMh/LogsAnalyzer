@@ -8,45 +8,36 @@ from processors.pipeline import ErrorPipeline
 from config.settings import LOGS_DIR
 
 pipeline = ErrorPipeline()
-
-# Stores last read position
 file_positions = {}
-
-# Stores separate extractors per file
 extractors = {}
 
 
 def process_full_file(path):
     """
-    ✅ Phase 1: Process entire existing log file (like main.py)
+    Runs a full scan of an existing log file and processes all exceptions.
     """
     print(f"\n📄 Running initial full scan on: {path}")
-
     extractor = ExceptionExtractor()
-    extractors[path] = extractor
-
-    file_positions[path] = 0  # start from top
 
     try:
         with open(path, "r", encoding="utf8") as f:
-            lines = f.readlines()
-            file_positions[path] = f.tell()
-    except Exception as e:
-        print(f"⚠️ Could not read {path}: {e}")
-        return
+            for line in f:
+                for exc in extractor.feed(line):
+                    if exc:
+                        handle_exception(exc)
+        # ✅ Flush any remaining exception at EOF
+        leftover = extractor._flush()
+        if leftover:
+            print("\n🚨 New exception detected (EOF flush):")
+            handle_exception(leftover)
 
-    for line in lines:
-        exceptions = extractor.feed(line)
-        for exc in exceptions:
-            print("\n🚨 Initial exception detected:")
-            print(exc)
-            result = pipeline.process_exception(exc)
-            print("✅ Processed:", result)
+    except Exception as e:
+        print(f"⚠️ Error reading {path}: {e}")
 
 
 def process_new_lines(path):
     """
-    ✅ Phase 2: Incremental processing (tail -f)
+    Processes new log lines when a file changes (incremental mode).
     """
     global file_positions, extractors
 
@@ -62,50 +53,57 @@ def process_new_lines(path):
             f.seek(last_pos)
             new_lines = f.readlines()
             file_positions[path] = f.tell()
-    except:
+    except Exception as e:
+        print(f"⚠️ Error reading {path}: {e}")
         return
 
     for line in new_lines:
-        exceptions = extractor.feed(line)
-        for exc in exceptions:
-            print("\n🚨 New exception detected:")
-            print(exc)
-            result = pipeline.process_exception(exc)
-            print("✅ Processed:", result)
+        for exc in extractor.feed(line):
+            if exc:
+                handle_exception(exc)
+
+
+def handle_exception(exc):
+    """
+    Common processing function for both full scans and real-time detection.
+    """
+    print("\n🚨 New exception detected:")
+    print(exc)
+    result = pipeline.process_exception(exc)
+    print("✅ Processed:", result)
 
 
 class LogDirectoryHandler(FileSystemEventHandler):
-
     def on_modified(self, event):
-        if event.src_path.endswith(".log"):
-            process_new_lines(event.src_path)
+        if not event.src_path.endswith(".log"):
+            return
+        process_new_lines(event.src_path)
 
     def on_created(self, event):
         if event.src_path.endswith(".log"):
             print(f"🆕 New log file detected: {event.src_path}")
-            process_full_file(event.src_path)  # full scan on new file
+            file_positions[event.src_path] = 0
+            extractors[event.src_path] = ExceptionExtractor()
 
 
 def preload_existing_logs():
     """
-    ✅ Before watching directory:
-       - Process ALL existing .log files fully
-       - Initialize extractor + offset
+    On startup, scan all log files and prepare watchers.
     """
     for file in os.listdir(LOGS_DIR):
         if file.endswith(".log"):
             full_path = os.path.join(LOGS_DIR, file)
             process_full_file(full_path)
+            file_positions[full_path] = os.path.getsize(full_path)
+            extractors[full_path] = ExceptionExtractor()
 
 
 if __name__ == "__main__":
     print("📡 Starting directory log watcher...")
     print(f"📁 Watching directory: {LOGS_DIR}")
 
-    # ✅ Phase 1: full scan
     preload_existing_logs()
 
-    # ✅ Phase 2: incremental real-time watch
     event_handler = LogDirectoryHandler()
     observer = Observer()
     observer.schedule(event_handler, LOGS_DIR, recursive=False)
@@ -116,5 +114,4 @@ if __name__ == "__main__":
             time.sleep(1)
     except KeyboardInterrupt:
         observer.stop()
-
     observer.join()

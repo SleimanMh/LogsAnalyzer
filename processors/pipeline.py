@@ -1,5 +1,9 @@
+import os
+import re
+import textwrap
+
 from processors.frame_parser import parse_frames
-from processors.code_snippet import extract_snippet
+from processors.code_snippet import extract_snippet, find_file_in_codebase
 from processors.compressor import shorten_trace
 from processors.canonicalizer import canonicalize_exception
 
@@ -7,61 +11,84 @@ from llm.openai_client import LLMClient
 from jira.jira_client import JiraClient
 from storage.ticket_store import TicketStore
 from storage.vector_store import cosine_sim, vec_to_b64, b64_to_vec
-from config.settings import SIMILARITY_THRESHOLD
+from config.settings import SIMILARITY_THRESHOLD, CODEBASE_DIRS
+
+
+MAX_TRACE_LINES = 60
+MAX_LIB_SNIPPET_CHARS = 1000
+MAX_TOTAL_PROMPT_CHARS = 4000
 
 
 class ErrorPipeline:
-
     def __init__(self):
         self.llm = LLMClient()
         self.jira = JiraClient()
         self.db = TicketStore()
 
-    def process_exception(self, trace):
+    def extract_full_function(self, path, line_no):
+        """
+        Extract the full function definition surrounding a given 1-based line number.
+        """
+        if not os.path.exists(path):
+            # Try to find the file in your codebase
+            alt = find_file_in_codebase(os.path.basename(path))
+            if alt:
+                path = alt
+            else:
+                print(f"⚠️ Could not locate file for {path}")
+                return None
 
-        # ✅ minimize / normalize trace
-        clean = canonicalize_exception(trace)
+        try:
+            with open(path, "r", encoding="utf8") as f:
+                lines = f.readlines()
 
-        # ✅ embed canonical trace
-        embedding = self.llm.embed(clean)
-        if embedding is None:
-            print("⚠️ LLM returned no embedding — skipping")
+            # Find nearest `def ...:` above the error line
+            start_idx = None
+            idx = max(0, line_no - 1)
+            for i in range(idx, -1, -1):
+                if re.match(r'^\s*def\s+\w+\s*\(.*\)\s*:', lines[i]):
+                    start_idx = i
+                    break
+            if start_idx is None:
+                return None
+
+            # Capture until the next top-level def/class or EOF
+            func_lines = []
+            for j in range(start_idx, len(lines)):
+                line = lines[j]
+                if j > start_idx and re.match(r'^(def|class)\s+\w+', line.strip()):
+                    break
+                func_lines.append(line)
+            return "".join(func_lines)
+
+        except Exception as e:
+            print(f"⚠️ Failed to extract full function from {path}: {e}")
             return None
 
-        # ✅ cosine search in DB
-        best_match = None
-        best_score = 0.0
+    def process_exception(self, trace):
+        # Canonicalize and embed for duplicate detection
+        clean = canonicalize_exception(trace)
+        embedding = self.llm.embed(clean)
 
+        best_match, best_score = None, 0.0
         for ticket_id, summary, b64vec in self.db.fetch_all_embeddings():
             stored_vec = b64_to_vec(b64vec)
-
             sim = cosine_sim(embedding, stored_vec)
             if sim > best_score:
-                best_score = sim
-                best_match = ticket_id
+                best_score, best_match = sim, ticket_id
 
-        # ✅ Duplicate found
+        # ✅ Duplicate handling
         if best_score >= SIMILARITY_THRESHOLD:
-            jira_key = self._get_jira_key(best_match)
+            cur = self.db.conn.cursor()
+            cur.execute("SELECT jira_key FROM tickets WHERE id = ?", (best_match,))
+            row = cur.fetchone()
+            jira_key = row[0] if row else None
 
-            # ✅ Log new occurrence
             self.db.add_occurrence(best_match, trace)
-
-            # ✅ Store detailed occurrence
-            self.db.add_exception_details(
-                ticket_id=best_match,
-                analysis={"priority": "", "summary": "", "cause": "", "suggestions": []},
-                trace=trace,
-                canonical=clean,
-                snippet=""
-            )
-
-            # ✅ add Jira comment
-            self.jira.add_comment(
-                jira_key,
-                f"⚠️ Error occurred again (similarity={best_score:.3f}). Auto-logged."
-            )
-
+            if jira_key:
+                self.jira.add_comment(jira_key, "Error occurred again (auto-detected).")
+            else:
+                print(f"⚠️ Warning: Jira key missing for ticket ID {best_match}")
             return {
                 "duplicate": True,
                 "ticket_id": best_match,
@@ -69,58 +96,104 @@ class ErrorPipeline:
                 "similarity": best_score,
             }
 
-        # ✅ Not duplicate → do LLM analysis
+        # ✅ Not duplicate — Prepare LLM context
         frames = parse_frames(trace)
-
         snippets = []
-        for fr in frames[:2]:
-            snip = extract_snippet(fr["path"], fr["line"])
-            if snip:
-                snippets.append({
-                    "path": fr["path"],
-                    "line": fr["line"],
-                    "snippet": snip
-                })
+
+        if frames:
+            project_frames = []
+            lib_frames = []
+
+            # Separate frames by project vs library
+            for fr in frames:
+                normalized = fr["path"].replace("\\", "/").lower()
+                if any(base.lower().replace("\\", "/") in normalized for base in CODEBASE_DIRS):
+                    project_frames.append(fr)
+                else:
+                    lib_frames.append(fr)
+
+            # ✅ Pick the last user frame in your project (most specific)
+            if project_frames:
+                user_frame = project_frames[-1]
+                func_code = self.extract_full_function(user_frame["path"], user_frame["line"])
+                if func_code:
+                    snippets.append({
+                        "path": user_frame["path"],
+                        "line": user_frame["line"],
+                        "snippet": func_code
+                    })
+                else:
+                    small_snip = extract_snippet(user_frame["path"], user_frame["line"])
+                    if small_snip:
+                        snippets.append({
+                            "path": user_frame["path"],
+                            "line": user_frame["line"],
+                            "snippet": small_snip
+                        })
+
+            # ✅ Add up to 2 library frames for context
+            for fr in lib_frames[:2]:
+                lib_snip = extract_snippet(fr["path"], fr["line"])
+                if lib_snip:
+                    snippets.append({
+                        "path": fr["path"],
+                        "line": fr["line"],
+                        "snippet": lib_snip[:MAX_LIB_SNIPPET_CHARS]
+                    })
+
+        # ✅ Log frames used
+        print("\n📄 Frames selected for LLM context:")
+        for s in snippets:
+            print(f" - {s['path']}:{s['line']} ({len(s['snippet'])} chars)")
+
+        # ✅ Shorten trace if too long
+        trace_lines = trace.splitlines()
+        if len(trace_lines) > MAX_TRACE_LINES:
+            trace = "\n".join(trace_lines[:30] + ["... (trace shortened) ..."] + trace_lines[-20:])
+
+        # ✅ Trim prompt size intelligently
+        total_chars = len(trace) + sum(len(s["snippet"]) for s in snippets)
+        if total_chars > MAX_TOTAL_PROMPT_CHARS:
+            print(f"⚠️ Prompt too long ({total_chars} chars), trimming non-user snippets first.")
+            if len(snippets) > 1:
+                for s in snippets[1:]:
+                    s["snippet"] = s["snippet"][:400]
+            total_chars = len(trace) + sum(len(s["snippet"]) for s in snippets)
+            if total_chars > MAX_TOTAL_PROMPT_CHARS:
+                trace = trace[:int(MAX_TOTAL_PROMPT_CHARS * 0.4)]
+
+        # ✅ Print final payload to LLM
+        print("\n===================== SENT TO LLM =====================")
+        print(f"STACK TRACE ({len(trace)} chars):\n{trace}")
+        for s in snippets:
+            print(f"\nCODE SNIPPET from {s['path']}:{s['line']} ({len(s['snippet'])} chars):")
+            print(textwrap.shorten(s["snippet"], width=800, placeholder=" ...[truncated for console]..."))
+        print("=======================================================\n")
 
         analysis = self.llm.analyze(trace, snippets)
 
-        # ✅ Priority normalization
-        raw_prio = str(analysis.get("priority", "")).lower()
-        if any(x in raw_prio for x in ["p1", "critical", "crit", "high"]):
+        summary = analysis["summary"]
+        description = analysis["cause"]
+        raw_priority = analysis["priority"].lower()
+        if "crit" in raw_priority or "p1" in raw_priority or "high" in raw_priority:
             priority = "High"
-        elif any(x in raw_prio for x in ["p2", "medium", "med"]):
+        elif "p2" in raw_priority or "med" in raw_priority:
             priority = "Medium"
         else:
             priority = "Low"
 
-        summary = analysis.get("summary", "Unhandled exception")
-        description = analysis.get("cause", "No cause provided by LLM")
+        suggestions = analysis.get("suggestions", [])
 
-        # ✅ Create Jira ticket
-        jira_key = self.jira.create_ticket(
-            summary=summary,
-            description=description,
-            priority=priority
-        )
-
-        # ✅ Store new ticket
+        jira_key = self.jira.create_ticket(summary, description, priority,suggestions)
         ticket_id = self.db.add_new_ticket(
             jira_key=jira_key,
             summary=summary,
             embedding=vec_to_b64(embedding)
         )
-
-        # ✅ store occurrence
         self.db.add_occurrence(ticket_id, trace)
-
-        # ✅ store exception details
-        snippet_text = snippets[0]["snippet"] if snippets else ""
         self.db.add_exception_details(
-            ticket_id=ticket_id,
-            analysis=analysis,
-            trace=trace,
-            canonical=clean,
-            snippet=snippet_text
+            ticket_id, analysis, trace, clean,
+            snippets[0]["snippet"] if snippets else ""
         )
 
         return {
@@ -129,9 +202,3 @@ class ErrorPipeline:
             "jira_key": jira_key,
             "analysis": analysis,
         }
-
-    def _get_jira_key(self, ticket_id):
-        cur = self.db.conn.cursor()
-        cur.execute("SELECT jira_key FROM tickets WHERE id = ?", (ticket_id,))
-        row = cur.fetchone()
-        return row[0] if row else None

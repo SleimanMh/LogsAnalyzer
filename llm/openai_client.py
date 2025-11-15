@@ -33,7 +33,7 @@ class LLMClient:
 You are a Python debugging assistant.
 You must return ONLY JSON with keys:
 - cause (string)
-- summary (string)
+- summary (string), it shouldn't exceed 255 characters.
 - priority (string: one of ["High", "Medium", "Low"])
 - suggestions (list of strings)
 
@@ -42,10 +42,12 @@ High   → crashes the program, breaks workflow, or corrupts data
 Medium → error prevents a feature from working, but app continues  
 Low    → minor issues, recoverable, noisy logs, not user-facing  
 
+
 STACK TRACE:
 {trace}
 
 CODE SNIPPETS:
+{snippets}
 """
 
         for s in snippets:
