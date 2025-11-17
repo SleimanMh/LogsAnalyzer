@@ -30,19 +30,29 @@ class LLMClient:
 
     def analyze(self, trace, snippets):
         prompt = f"""
-You are a Python debugging assistant.
-You must return ONLY JSON with keys:
+You are a Python debugging assistant. Given a stack trace and relevant code snippets, 
+analyze the error and return a JSON object with the following fields:
+
 - cause (string)
-- summary (string), it shouldn't exceed 255 characters.
-- priority (string: one of ["High", "Medium", "Low"])
+- summary (string, max 255 chars)
+- priority (string: High, Medium, Low)
 - suggestions (list of strings)
+- documentation_link (list of 1-2 URLs)
+- exception_class (string: one of ["PythonError", "MLError", "AIPipelineError", "DataError"])
+
+Classification guidelines:
+- PythonError -> built-in Python exceptions (TypeError, KeyError, FileNotFoundError, etc.)
+- MLError -> errors from ML libraries (PyTorch, TensorFlow, Sklearn, ONNX, Transformers, CUDA, NCCL…)
+- AIPipelineError -> errors inside custom application or pipeline logic
+- DataError -> data format/schema/dtype/value issues, Pandas/Numpy loading problems
+
 
 Choose priority using:
-High   → crashes the program, breaks workflow, or corrupts data  
-Medium → error prevents a feature from working, but app continues  
-Low    → minor issues, recoverable, noisy logs, not user-facing  
+High   → crashes the program, breaks workflow, corrupts data  
+Medium → feature breaks but program continues  
+Low    → minor issues, noisy logs, recoverable  
 
-
+Your output must be valid JSON only.
 STACK TRACE:
 {trace}
 

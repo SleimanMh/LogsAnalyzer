@@ -1,86 +1,98 @@
-# processors/exception_extractor.py
 import re
 
-# Matches optional ISO timestamp + [LEVEL] prefix, then returns the rest of the line in group(1)
-PREFIX = re.compile(r'^\s*\d{4}-\d{2}-\d{2}T[0-9:\.]+(?:Z|[+\-]\d{2}:\d{2})?\s*\[[A-Z]+\]\s+(.*)$')
+TIMESTAMP_PREFIX = re.compile(
+    r'^\s*\d{4}-\d{2}-\d{2}T[0-9:\.]+(?:Z|[+\-]\d{2}:\d{2})?\s*\[[A-Z]+\]'
+)
 
-# Python frame line (works with or without prefixes because we use .search)
-FRAME_LINE = re.compile(r'File ".*?", line \d+, in .+')
+FRAME_LINE = re.compile(r'^\s*File ".*?", line \d+, in .+')
+EXC_LINE = re.compile(r'^\s*[A-Za-z_][\w\.]*(Error|Exception)\s*:?')
+WARN_LINE = re.compile(r'^\s*[A-Za-z_][\w\.]*Warning\s*:?')
 
-# Start of Python traceback (helps us enter "collecting" mode even if first line is stripped)
-TRACEBACK_START = re.compile(r'Traceback \(most recent call last\):')
-
-# Final exception line (Error/Exception/Throwable/Warning) with optional leading whitespace
-EXC_LINE = re.compile(r'^\s*(?:[A-Za-z_][\w\.]*(?:Error|Exception|Throwable|Warning)|'
-                      r'(?:UserWarning|DeprecationWarning|RuntimeWarning))\s*:')
-
-# Java frames
-JAVA_FRAME = re.compile(r'^\s*at\s+\w+(?:\.\w+)*\([^)]+\)')
 
 class ExceptionExtractor:
-    """
-    Collects multi-line Python exceptions from log streams that may
-    include timestamp/log-level prefixes. Also treats single-line [WARNING]
-    messages as lightweight "events" if desired.
-    """
-    def __init__(self, capture_warnings_as_events: bool = True):
-        self.collecting = False
-        self.buffer = []
-        self.saw_frame = False
-        self.capture_warnings_as_events = capture_warnings_as_events
+    def __init__(self):
+        self.current = []
+        self.has_frame = False
+        self.has_exc = False
 
-    def _strip_prefix(self, line: str) -> str:
-        m = PREFIX.match(line)
-        return m.group(1) if m else line
+    def _reset(self):
+        self.current = []
+        self.has_frame = False
+        self.has_exc = False
+
+    def _is_single_line_exception(self, line: str) -> bool:
+        # [ERROR] xxx
+        if "[ERROR]" in line:
+            return True
+
+        # python exception in one line
+        logical = TIMESTAMP_PREFIX.sub("", line).strip()
+        if EXC_LINE.match(logical):
+            return True
+
+        return False
+
+    def _is_single_line_warning(self, line: str) -> bool:
+        # `[WARNING] None` → not a real event
+        if "[WARNING]" in line and "None" not in line:
+            return True
+        return False
+
+    def _flush_if_exception(self):
+        if not self.current:
+            return None
+
+        block = "\n".join(self.current)
+
+        # multi-line traceback
+        if self.has_frame or self.has_exc:
+            return block
+
+        # single-line exception
+        if self._is_single_line_exception(self.current[0]):
+            return block
+
+        # single-line warning event
+        if self._is_single_line_warning(self.current[0]):
+            return block
+
+        return None
 
     def feed(self, raw_line: str):
-        """
-        Feed a single raw log line. Returns a list of completed exception blocks (0..n).
-        """
         results = []
         line = raw_line.rstrip("\n")
 
-        # Keep original line for output, but use a prefix-stripped version for pattern checks
-        logical = self._strip_prefix(line)
+        is_timestamp = TIMESTAMP_PREFIX.match(line) is not None
 
-        # Optionally capture single-line warnings as events (not full tracebacks)
-        if (not self.collecting) and self.capture_warnings_as_events:
-            # e.g. "⚠️ Kaggle credentials not found — using local CSV instead."
-            # We use the presence of [WARNING] in the raw prefix as a hint.
-            if "[WARNING]" in raw_line and not (FRAME_LINE.search(logical) or JAVA_FRAME.search(logical)):
-                results.append(f"{line}")
-                return results
+        if is_timestamp:
+            flushed = self._flush_if_exception()
+            if flushed:
+                results.append(flushed)
 
-        # Enter collecting mode if we see a traceback header, a Python frame, or a Java frame
-        if not self.collecting and (TRACEBACK_START.search(logical) or FRAME_LINE.search(logical) or JAVA_FRAME.search(logical)):
-            self.collecting = True
-            self.buffer = [line]
-            self.saw_frame = FRAME_LINE.search(logical) is not None or JAVA_FRAME.search(logical) is not None
-            return results
+            self._reset()
+            self.current.append(line)
 
-        if self.collecting:
-            self.buffer.append(line)
+        else:
+            if not self.current:
+                self.current = [line]
+            else:
+                self.current.append(line)
 
-            # Track if we actually saw any frame lines (python or java)
-            if FRAME_LINE.search(logical) or JAVA_FRAME.search(logical):
-                self.saw_frame = True
+        # trace recognition
+        if FRAME_LINE.search(line):
+            self.has_frame = True
 
-            # Heuristics to decide when an exception finished:
-            # 1) We see an "exception line" (KeyError:, ValueError:, ... Warning:)
-            if EXC_LINE.search(logical):
-                # Flush the current buffer as a complete exception
-                results.append("\n".join(self.buffer))
-                self.buffer = []
-                self.collecting = False
-                self.saw_frame = False
-                return results
-
-            # 2) A blank line AFTER we saw frames often ends a traceback in many loggers
-            if self.saw_frame and logical.strip() == "":
-                results.append("\n".join(self.buffer))
-                self.buffer = []
-                self.collecting = False
-                self.saw_frame = False
-                return results
+        if EXC_LINE.search(line):
+            self.has_exc = True
+            # flush immediately on final python error
+            flushed = self._flush_if_exception()
+            if flushed:
+                results.append(flushed)
+                self._reset()
 
         return results
+
+    def finalize(self):
+        flushed = self._flush_if_exception()
+        self._reset()
+        return [flushed] if flushed else []

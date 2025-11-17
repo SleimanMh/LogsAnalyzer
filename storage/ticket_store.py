@@ -39,20 +39,23 @@ class TicketStore:
             CREATE TABLE IF NOT EXISTS exception_details (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 ticket_id INTEGER,
-                
+
                 priority TEXT,
                 summary TEXT,
                 cause TEXT,
                 suggestions TEXT,
-                
+                documentation_links TEXT,
+                exception_class TEXT,
+
                 trace TEXT,
                 canonical_trace TEXT,
-                
                 snippet TEXT,
-                
+
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )
         """)
+
+
         
         self.conn.commit()
 
@@ -87,18 +90,22 @@ class TicketStore:
         cur = self.conn.cursor()
 
         cur.execute("""
-            INSERT INTO exception_details 
-            (ticket_id, priority, summary, cause, suggestions, trace, canonical_trace, snippet)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO exception_details
+            (ticket_id, priority, summary, cause, suggestions, documentation_links, 
+            exception_class, trace, canonical_trace, snippet)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             ticket_id,
             analysis["priority"],
             analysis["summary"],
             analysis["cause"],
             json.dumps(analysis.get("suggestions", [])),
+            json.dumps(analysis.get("documentation_link", [])),
+            analysis.get("exception_class", "Unknown"),
             trace,
             canonical,
             snippet,
         ))
 
         self.conn.commit()
+
