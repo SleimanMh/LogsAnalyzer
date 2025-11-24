@@ -7,16 +7,23 @@ from processors.exception_extractor import ExceptionExtractor
 from processors.pipeline import ErrorPipeline
 from config.settings import LOGS_DIR
 
+
 pipeline = ErrorPipeline()
-file_positions = {}
-extractors = {}
+
+# Track last-read positions for incremental scanning
+file_positions = {}       # { path → byte offset }
+extractors = {}           # { path → ExceptionExtractor() }
 
 
+# ----------------------------------------------------------------------
+# FULL INITIAL SCAN
+# ----------------------------------------------------------------------
 def process_full_file(path):
     """
     Runs a full scan of an existing log file and processes all exceptions.
     """
     print(f"\n📄 Running initial full scan on: {path}")
+
     extractor = ExceptionExtractor()
 
     try:
@@ -25,23 +32,32 @@ def process_full_file(path):
                 for exc in extractor.feed(line):
                     if exc:
                         handle_exception(exc)
-        # ✅ Flush any remaining exception at EOF
-        leftover = extractor._flush()
-        if leftover:
+
+        # Flush final pending exception at EOF
+        leftover = extractor.finalize()
+        if leftover and leftover[0]:
             print("\n🚨 New exception detected (EOF flush):")
-            handle_exception(leftover)
+            handle_exception(leftover[0])
 
     except Exception as e:
         print(f"⚠️ Error reading {path}: {e}")
 
 
+# ----------------------------------------------------------------------
+# INCREMENTAL SCAN FOR NEW LINES
+# ----------------------------------------------------------------------
 def process_new_lines(path):
     """
-    Processes new log lines when a file changes (incremental mode).
+    Processes only newly appended lines in an already-known log file.
     """
     global file_positions, extractors
 
+    if not os.path.exists(path):
+        print(f"⚠️ File not found: {path}")
+        return
+
     if path not in file_positions:
+        # First time seeing this file in incremental mode
         file_positions[path] = 0
         extractors[path] = ExceptionExtractor()
 
@@ -63,41 +79,64 @@ def process_new_lines(path):
                 handle_exception(exc)
 
 
+# ----------------------------------------------------------------------
+# COMMON PROCESSOR
+# ----------------------------------------------------------------------
 def handle_exception(exc):
     """
-    Common processing function for both full scans and real-time detection.
+    Common processing function for both full scans and realtime detection.
     """
     print("\n🚨 New exception detected:")
     print(exc)
+
     result = pipeline.process_exception(exc)
     print("✅ Processed:", result)
 
 
+# ----------------------------------------------------------------------
+# WATCHDOG EVENT HANDLER
+# ----------------------------------------------------------------------
 class LogDirectoryHandler(FileSystemEventHandler):
     def on_modified(self, event):
+        if event.is_directory:
+            return
         if not event.src_path.endswith(".log"):
             return
+
         process_new_lines(event.src_path)
 
     def on_created(self, event):
+        if event.is_directory:
+            return
         if event.src_path.endswith(".log"):
             print(f"🆕 New log file detected: {event.src_path}")
             file_positions[event.src_path] = 0
             extractors[event.src_path] = ExceptionExtractor()
 
 
+# ----------------------------------------------------------------------
+# PRELOAD EXISTING LOG FILES ON STARTUP
+# ----------------------------------------------------------------------
 def preload_existing_logs():
-    """
-    On startup, scan all log files and prepare watchers.
-    """
+    if not os.path.exists(LOGS_DIR):
+        print(f"⚠️ Logs directory does not exist: {LOGS_DIR}")
+        return
+
     for file in os.listdir(LOGS_DIR):
         if file.endswith(".log"):
             full_path = os.path.join(LOGS_DIR, file)
+
+            # Full scan existing file
             process_full_file(full_path)
+
+            # Initialize file position & extractor
             file_positions[full_path] = os.path.getsize(full_path)
             extractors[full_path] = ExceptionExtractor()
 
 
+# ----------------------------------------------------------------------
+# MAIN ENTRY POINT
+# ----------------------------------------------------------------------
 if __name__ == "__main__":
     print("📡 Starting directory log watcher...")
     print(f"📁 Watching directory: {LOGS_DIR}")
@@ -114,4 +153,6 @@ if __name__ == "__main__":
             time.sleep(1)
     except KeyboardInterrupt:
         observer.stop()
+
     observer.join()
+ 

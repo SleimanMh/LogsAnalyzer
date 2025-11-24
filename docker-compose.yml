@@ -1,0 +1,69 @@
+version: "3.9"
+
+services:
+
+  error-analyzer:
+    build: .
+    container_name: error-analyzer
+    command: python watcher.py
+    volumes:
+      - ../ML/logs:/app/logs:ro
+      - ../ML:/app/ml_codebase:ro
+      - ./storage:/app/storage
+      - ./training_data:/app/training_data
+      - ./data:/app/data
+    env_file:
+      - .env
+    environment:
+      PYTHONUNBUFFERED: 1
+      LOGS_DIR: /app/logs
+      CODEBASE_DIR: /app
+    networks:
+      - error-analysis-net
+      - ml_ml-network
+    restart: unless-stopped
+
+  error-analyzer-api:
+    build: .
+    container_name: error-analyzer-api
+    command: python api.py
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./storage:/app/storage
+      - ./training_data:/app/training_data
+    env_file:
+      - .env
+    networks:
+      - error-analysis-net
+      - ml_ml-network
+    depends_on:
+      - error-analyzer
+    restart: unless-stopped
+
+  error-analyzer-dashboard:
+    build: .
+    container_name: error-analyzer-dashboard
+    command: streamlit run dashboard.py --server.port=8502 --server.address=0.0.0.0
+    ports:
+      - "8502:8502"
+    volumes:
+      - ./storage:/app/storage
+      - ./training_data:/app/training_data
+    env_file:
+      - .env
+    environment:
+      API_URL: http://error-analyzer-api:5000
+    depends_on:
+      - error-analyzer-api
+    networks:
+      - error-analysis-net
+      - ml_ml-network
+    restart: unless-stopped
+
+networks:
+  error-analysis-net:
+    driver: bridge
+
+  ml_ml-network:
+    external: true

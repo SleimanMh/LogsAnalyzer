@@ -86,7 +86,7 @@ class TicketStore:
         cur.execute("SELECT id, summary, embedding FROM tickets")
         return cur.fetchall()
 
-    def add_exception_details(self, ticket_id, analysis, trace, canonical, snippet):
+    def add_exception_details(self, ticket_id, analysis, trace, canonical,ml_class, snippet):
         cur = self.conn.cursor()
 
         cur.execute("""
@@ -101,7 +101,7 @@ class TicketStore:
             analysis["cause"],
             json.dumps(analysis.get("suggestions", [])),
             json.dumps(analysis.get("documentation_link", [])),
-            analysis.get("exception_class", "Unknown"),
+            ml_class,
             trace,
             canonical,
             snippet,

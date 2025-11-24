@@ -5,10 +5,10 @@ load_dotenv()
 
 OPENAI_API_KEY= os.getenv("OPENAI_API_KEY")
 # Logs directory
-LOGS_DIR = r"C:\development\ML\logs"
+LOGS_DIR = os.getenv("LOGS_DIR", "/app/logs")
 
 CODEBASE_DIRS = [
-    r"C:\development\ML"
+    os.getenv("CODEBASE_DIR", "/app")
 ]
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "..", "storage", "tickets.db")
@@ -29,4 +29,4 @@ JIRA_ISSUE_TYPE = "Task"
 DEFAULT_LABELS = ["automation", "log-bot"]
 
 # Embedding similarity threshold (0–1)
-SIMILARITY_THRESHOLD = 0.87
+SIMILARITY_THRESHOLD = 0.90

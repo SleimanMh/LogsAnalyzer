@@ -1,21 +1,20 @@
 import streamlit as st
 import requests
 import json
+import os
 
-API_URL = "http://127.0.0.1:5000/exceptions"
+# Use environment variable for API URL, with fallback for local development
+API_URL = "http://error-analyzer-api:5000/exceptions"
 
 st.set_page_config(
-    page_title="Exception Dashboard",
+    page_title="ALERTOPS Dashboard",
     page_icon="🚨",
     layout="wide"
 )
 
-st.title("🚨 Exception Monitoring Dashboard")
+st.title("🚨 AlertOps Dashboard")
 st.markdown("A live overview of detected exceptions with AI-generated insights.")
 
-# ---------------------------
-# Fetch Data From Flask API
-# ---------------------------
 @st.cache_data(ttl=5)
 def load_exceptions():
     try:
@@ -32,9 +31,6 @@ if not data:
     st.warning("No exception data found.")
     st.stop()
 
-# ---------------------------
-# Sidebar Filters
-# ---------------------------
 st.sidebar.header("Filters")
 
 priority_filter = st.sidebar.multiselect(
@@ -45,15 +41,12 @@ priority_filter = st.sidebar.multiselect(
 
 exception_class_filter = st.sidebar.multiselect(
     "Filter by exception class",
-    ["PythonError", "MLError", "AIPipelineError", "DataError"],
-    default=["PythonError", "MLError", "AIPipelineError", "DataError"]
+    ["PythonError", "MLError", "AIError"],
+    default=["PythonError", "MLError", "AIError"]
 )
 
 search_query = st.sidebar.text_input("Search in summary / cause")
 
-# ---------------------------
-# Filtering Logic
-# ---------------------------
 filtered = []
 for ex in data:
 
@@ -75,9 +68,6 @@ for ex in data:
 
 st.subheader(f"Showing **{len(filtered)}** matching exceptions")
 
-# ---------------------------
-# Exception Cards
-# ---------------------------
 for ex in filtered:
     with st.expander(
         f"{ex['priority']} | {ex['exception_class']} | {ex['summary']} — {ex['created_at']}"

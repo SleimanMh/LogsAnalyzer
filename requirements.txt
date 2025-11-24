@@ -1,0 +1,13 @@
+openai
+flask
+watchdog
+python-dotenv
+pydantic
+tiktoken
+numpy
+pandas
+scikit-learn
+joblib
+requests
+streamlit
+dataset

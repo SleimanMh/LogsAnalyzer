@@ -12,13 +12,9 @@ WARN_LINE = re.compile(r'^\s*[A-Za-z_][\w\.]*Warning\s*:?')
 class ExceptionExtractor:
     def __init__(self):
         self.current = []
-        self.has_frame = False
-        self.has_exc = False
 
     def _reset(self):
         self.current = []
-        self.has_frame = False
-        self.has_exc = False
 
     def _is_single_line_exception(self, line: str) -> bool:
         # [ERROR] xxx
@@ -44,8 +40,11 @@ class ExceptionExtractor:
 
         block = "\n".join(self.current)
 
-        # multi-line traceback
-        if self.has_frame or self.has_exc:
+        # multi-line traceback (has File frames or Exception lines)
+        has_frame = any(FRAME_LINE.search(line) for line in self.current)
+        has_exc = any(EXC_LINE.search(line) for line in self.current)
+
+        if has_frame or has_exc:
             return block
 
         # single-line exception
@@ -59,12 +58,18 @@ class ExceptionExtractor:
         return None
 
     def feed(self, raw_line: str):
+        """
+        Parse exceptions based on TIMESTAMP only.
+        New timestamp = new exception.
+        All exception chaining within same timestamp stays together.
+        """
         results = []
         line = raw_line.rstrip("\n")
 
         is_timestamp = TIMESTAMP_PREFIX.match(line) is not None
 
         if is_timestamp:
+            # New timestamp encountered → flush previous exception block
             flushed = self._flush_if_exception()
             if flushed:
                 results.append(flushed)
@@ -73,26 +78,16 @@ class ExceptionExtractor:
             self.current.append(line)
 
         else:
+            # Continuation line (no timestamp)
             if not self.current:
                 self.current = [line]
             else:
                 self.current.append(line)
 
-        # trace recognition
-        if FRAME_LINE.search(line):
-            self.has_frame = True
-
-        if EXC_LINE.search(line):
-            self.has_exc = True
-            # flush immediately on final python error
-            flushed = self._flush_if_exception()
-            if flushed:
-                results.append(flushed)
-                self._reset()
-
         return results
 
     def finalize(self):
+        """Flush remaining exception block at end of stream."""
         flushed = self._flush_if_exception()
         self._reset()
         return [flushed] if flushed else []
