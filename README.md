@@ -1,4 +1,5 @@
 Log Analyzer System
+
 This application monitors runtime logs, extracts exceptions, classifies errors using an ML model, enriches them using an LLM, and automatically opens or updates Jira tickets.
 It is designed for automated debugging, issue triage, and continuous monitoring of your application's logs.
 
