@@ -1,11 +1,12 @@
 version: "3.9"
 
 services:
-
-  error-analyzer:
+  error-analyzer-api:
     build: .
-    container_name: error-analyzer
-    command: python watcher.py
+    container_name: error-analyzer-api
+    command: python main.py
+    ports:
+      - "5000:5000"
     volumes:
       - ../ML/logs:/app/logs:ro
       - ../ML:/app/ml_codebase:ro
@@ -17,28 +18,10 @@ services:
     environment:
       PYTHONUNBUFFERED: 1
       LOGS_DIR: /app/logs
-      CODEBASE_DIR: /app
+      CODEBASE_DIR: /app/ml_codebase
     networks:
       - error-analysis-net
       - ml_ml-network
-    restart: unless-stopped
-
-  error-analyzer-api:
-    build: .
-    container_name: error-analyzer-api
-    command: python api.py
-    ports:
-      - "5000:5000"
-    volumes:
-      - ./storage:/app/storage
-      - ./training_data:/app/training_data
-    env_file:
-      - .env
-    networks:
-      - error-analysis-net
-      - ml_ml-network
-    depends_on:
-      - error-analyzer
     restart: unless-stopped
 
   error-analyzer-dashboard:
@@ -64,6 +47,5 @@ services:
 networks:
   error-analysis-net:
     driver: bridge
-
   ml_ml-network:
     external: true
