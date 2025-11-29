@@ -104,26 +104,3 @@ class JiraClient:
             )
 
         return response.json()
-
-# jira_client.py
-# import random
-
-# class JiraClient:
-
-#     def __init__(self):
-#         pass  # Jira disabled
-
-#     def create_ticket(self, summary, description, priority, suggestions):
-#         """
-#         Fake Jira generator:
-#         Returns a synthetic Jira key without making any HTTP calls.
-#         """
-#         project_key = "SCRUM"
-#         fake_id = random.randint(1000, 9999)
-#         return f"{project_key}-{fake_id}"
-
-#     def add_comment(self, issue_key, comment):
-#         """
-#         Disabled. Just ignore.
-#         """
-#         return {"status": "ignored"}
